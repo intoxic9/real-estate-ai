@@ -39,6 +39,7 @@ class ChatMessageResponse(BaseModel):
     recommended_products: List[Any] = Field(default_factory=list)
     pipeline_complete: bool = False
     lead_profile_updates: Optional[dict[str, Any]] = None
+    widget: Optional[dict[str, Any]] = None
     lead_id: Optional[str] = None
     score: Optional[int] = None
     bucket: Optional[str] = None
@@ -74,6 +75,7 @@ async def send_message(
         recommended_products=[],
         pipeline_complete=bool(result.get("pipeline_complete", False)),
         lead_profile_updates=result.get("lead_profile_updates"),
+        widget=result.get("widget"),
         lead_id=result.get("lead_id"),
         score=result.get("score"),
         bucket=result.get("bucket"),
@@ -104,8 +106,7 @@ async def get_history(
             detail="session_id is required",
         )
 
-    _ = db
-    items = orchestrator.get_transcript(session_id)
+    items = await orchestrator.get_transcript(session_id, db=db)
     return [
         ChatMessage(
             role=item.get("role", "system"),  # type: ignore[arg-type]

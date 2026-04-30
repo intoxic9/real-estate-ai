@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}— Listings{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Listings <span class="page-count">{{ total }} results</span></h1>
+  <a href="/api/export_csv" class="btn btn-ghost btn-sm">⬇ Export CSV</a>
+</div>
+
+<!-- Modern Filter Bar -->
+<div class="filter-panel" style="background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.5rem; margin-bottom: 2.5rem; box-shadow: var(--shadow);">
+  <form action="/listings" method="get" class="filter-flex-form" style="display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-end;">
+    
+    <div class="filter-group" style="flex: 2; min-width: 250px;">
+      <label for="q-search" class="form-label" style="font-size: 0.75rem; letter-spacing: 0.05em; color: var(--accent);">🔍 Quick Search</label>
+      <input type="text" id="q-search" name="q" value="{{ q or '' }}" placeholder="Keywords, area, or title…" class="form-control" style="background: var(--bg); border-color: var(--border2);" list="search-suggestions">
+      <datalist id="search-suggestions"></datalist>
+    </div>
+
+    <div class="filter-group" style="flex: 1; min-width: 150px;">
+      <label for="city-select" class="form-label" style="font-size: 0.75rem; color: var(--text3);">📍 Location</label>
+      <select id="city-select" name="city" class="form-control" style="background: var(--bg); border-color: var(--border2);">
+        <option value="">Global Search</option>
+        {% for c in cities %}<option value="{{ c }}" {% if c==city %}selected{% endif %}>{{ c|capitalize }}</option>{% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-group" style="flex: 1.5; min-width: 200px;">
+      <label class="form-label" style="font-size: 0.75rem; color: var(--text3);">💰 Budget Range</label>
+      <div style="display: flex; gap: 8px;">
+        <input type="number" id="min-p" name="min_p" value="{{ min_p or '' }}" placeholder="Min" class="form-control" style="background: var(--bg); border-color: var(--border2);">
+        <input type="number" id="max-p" name="max_p" value="{{ max_p or '' }}" placeholder="Max" class="form-control" style="background: var(--bg); border-color: var(--border2);">
+      </div>
+    </div>
+
+    <div class="filter-group" style="flex: 0.8; min-width: 100px;">
+      <label for="type-select" class="form-label" style="font-size: 0.75rem; color: var(--text3);">🏠 Type</label>
+      <select id="type-select" name="type" class="form-control" style="background: var(--bg); border-color: var(--border2);">
+        <option value="">All</option>
+        <option value="rent" {% if ltype=='rent' %}selected{% endif %}>Rent</option>
+        <option value="sale" {% if ltype=='sale' %}selected{% endif %}>Sale</option>
+      </select>
+    </div>
+
+    <div class="filter-group" style="flex: 0.8; min-width: 100px;">
+      <label for="beds-select" class="form-label" style="font-size: 0.75rem; color: var(--text3);">🛏 Beds</label>
+      <select id="beds-select" name="beds" class="form-control" style="background: var(--bg); border-color: var(--border2);">
+        <option value="">Any</option>
+        <option value="0" {% if beds=='0' %}selected{% endif %}>Studio+</option>
+        <option value="1" {% if beds=='1' %}selected{% endif %}>1+ BR</option>
+        <option value="2" {% if beds=='2' %}selected{% endif %}>2+ BR</option>
+        <option value="3" {% if beds=='3' %}selected{% endif %}>3+ BR</option>
+      </select>
+    </div>
+
+    <div class="filter-actions" style="display: flex; align-items: center; gap: 1rem; margin-top: 0.5rem; width: 100%; border-top: 1px solid var(--border); padding-top: 1rem;">
+      <label class="checkbox-wrapper" style="display: flex; align-items: center; gap: 10px; font-size: 0.85rem; cursor: pointer; color: var(--text2);">
+        <input type="checkbox" name="has_phone" value="1" {% if has_phone %}checked{% endif %} style="accent-color: var(--accent); width: 16px; height: 16px;"> 
+        <span>Verified Listings Only (With 📞 Phone)</span>
+      </label>
+      
+      <div style="margin-left: auto; display: flex; gap: 12px;">
+        {% if q or city or min_p or max_p or beds or src or has_phone %}
+          <a href="{{ url_for('listings') }}" class="btn btn-ghost btn-sm" style="border: none;">✕ Reset All</a>
+        {% endif %}
+        <button type="submit" class="btn btn-primary" style="padding: 0.6rem 2rem; box-shadow: 0 4px 15px rgba(245,158,11,0.2);">
+          ✨ Apply Filters
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if listings %}
+<div class="listing-grid">
+  {% for l in listings %}
+  <div class="listing-card">
+    <div class="lc-header">
+      <span class="badge badge-{{ 'blue' if l.listing_type=='sale' else 'amber' }}">{{ l.listing_type }}</span>
+      <span class="badge badge-gray lc-source">{{ l.source }}</span>
+      {% if l.synced_to_sheet %}<span class="badge badge-green">✓ Synced</span>{% endif %}
+    </div>
+    <h4 class="lc-title"><a href="{{ l.url }}" target="_blank" title="{{ l.title }}">{{ l.title[:70] }}{% if l.title|length>70 %}…{% endif %}</a></h4>
+    <div class="lc-price">{{ l.price or 'Price not listed' }}</div>
+    <div class="lc-meta">
+      {% if l.city %}<span class="lc-city">📍 {{ l.city }}</span>{% endif %}
+      <span>🛏 {{ l.beds or '—' }} bd</span>
+      <span>🚿 {{ l.baths or '—' }} ba</span>
+      <span>📐 {{ l.sqft or '—' }} sqft</span>
+    </div>
+    
+    <div class="lc-address" style="font-size: 0.75rem; color: var(--accent); border-top: 1px dashed var(--border); pt-1; font-weight: 500;">
+      🏢 {{ l.address or 'Map Address Pending' }}
+    </div>
+
+    {% if l.description %}
+    <p class="lc-desc">{{ l.description[:130] }}…</p>
+    {% endif %}
+    <div class="lc-contact" id="contact-{{ l.id }}" style="background: var(--bg3); padding: 10px; border-radius: 8px; border: 1px solid var(--border2); display: flex; flex-direction: column; gap: 6px;">
+      <div class="contact-item">
+        <span class="contact-icon">📞</span>
+        {% if l.phone %}
+          <a href="tel:{{ l.phone }}" style="color: var(--accent); font-weight: 900; font-size: 1rem;">{{ l.phone }}</a>
+        {% else %}
+          <span style="color: var(--text3); font-size: 0.8rem; opacity: 0.6;">Phone not listed on source</span>
+        {% endif %}
+      </div>
+      
+      <div class="contact-item">
+        <span class="contact-icon">✉️</span>
+        {% if l.email %}
+          <a href="mailto:{{ l.email }}" style="color: var(--blue); font-weight: 700;">{{ l.email }}</a>
+        {% else %}
+          <span style="color: var(--text3); font-size: 0.8rem; opacity: 0.6;">Email not found</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="lc-footer">
+      <span class="td-muted" style="font-size: 0.7rem; font-weight: bold; color: var(--green);">
+        🕒 Posted: 
+        {{ l.posted_at or l.created_at[:10] }}
+      </span>
+      <a href="{{ l.url }}" target="_blank" class="btn btn-ghost btn-xs">Open Source →</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Pagination -->
+{% if pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ q }}&city={{ city }}&type={{ ltype }}&min_p={{ min_p }}&max_p={{ max_p }}&beds={{ beds }}&src={{ src }}&has_phone={{ has_phone }}" class="page-btn">← Prev</a>{% endif %}
+  {% for p in range(1, pages+1) %}
+    {% if p == page %}
+      <span class="page-btn page-btn--active">{{ p }}</span>
+    {% elif p == 1 or p == pages or (p >= page-2 and p <= page+2) %}
+      <a href="?page={{ p }}&q={{ q }}&city={{ city }}&type={{ ltype }}&min_p={{ min_p }}&max_p={{ max_p }}&beds={{ beds }}&src={{ src }}&has_phone={{ has_phone }}" class="page-btn">{{ p }}</a>
+    {% elif p == page-3 or p == page+3 %}
+      <span class="page-btn page-btn--dots">…</span>
+    {% endif %}
+  {% endfor %}
+  {% if page < pages %}<a href="?page={{ page+1 }}&q={{ q }}&city={{ city }}&type={{ ltype }}&min_p={{ min_p }}&max_p={{ max_p }}&beds={{ beds }}&src={{ src }}&has_phone={{ has_phone }}" class="page-btn">Next →</a>{% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="empty-state">
+  <div class="empty-icon">🏠</div>
+  <h3>No listings found</h3>
+  <p>{% if q or city or ltype %}Try adjusting your filters.{% else %}Start a scrape job to collect listings.{% endif %}</p>
+  <a href="{{ url_for('scraper') }}" class="btn btn-primary">Launch Scraper →</a>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<div id="debug-info" style="font-size: 0.6rem; color: var(--text3); opacity: 0.3; margin-top: 50px; padding: 10px; border-top: 1px solid var(--border);">
+  DEBUG: {{ debug_query }}
+</div>
+<script>
+async function fetchDetails(btn, id) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Hunting Info…';
+  
+  try {
+    const res = await fetch(`/api/fetch_details/${id}`, {method:'POST'});
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch(e) {
+      throw new Error("Server sent invalid response. Please refresh and try again.");
+    }
+    
+    if (data.ok) {
+      btn.textContent = data.found ? '✅ Found!' : '❌ Not Found';
+      btn.style.background = data.found ? 'var(--green)' : 'var(--bg3)';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      alert('Fetch failed: ' + (data.error || 'Unknown error'));
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  } catch (e) {
+    alert('Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+// Smart Search Suggestions
+const qInput = document.getElementById('q-search');
+const qList = document.getElementById('search-suggestions');
+
+if (qInput && qList) {
+    qInput.addEventListener('input', async (e) => {
+        const val = e.target.value.trim();
+        if (val.length < 2) return;
+
+        try {
+            const resp = await fetch(`/api/suggestions?q=${encodeURIComponent(val)}`);
+            const data = await resp.json();
+            
+            qList.innerHTML = '';
+            data.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item;
+                qList.appendChild(option);
+            });
+        } catch (err) {
+            console.error("Suggestions fetch failed", err);
+        }
+    });
+}
+</script>
+{% endblock %}

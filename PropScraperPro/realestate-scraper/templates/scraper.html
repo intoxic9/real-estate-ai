@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}— Scraper{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Scraper</h1>
+  <span class="page-sub">Launch background scrape jobs to collect public listings</span>
+</div>
+
+<div class="scraper-layout">
+  <!-- Launch panel -->
+  <div class="panel scrape-launch">
+    <div class="panel-header"><h3>New Scrape Job</h3></div>
+
+    <div class="form-group">
+      <label class="form-label">City <span class="form-hint">(Craigslist subdomain)</span></label>
+      <select id="city-select" class="form-control">
+        <option value="all_usa">🇺🇸 All Major USA Cities (Auto)</option>
+        <option value="dubai">🇦🇪 Dubai (Dubizzle/Bayut)</option>
+        <option value="newyork" selected>New York</option>
+        <option value="losangeles">Los Angeles</option>
+        <option value="chicago">Chicago</option>
+        <option value="dallas">Dallas</option>
+        <option value="miami">Miami</option>
+        <option value="custom">✍️ Other (USA City)...</option>
+      </select>
+    </div>
+
+    <div id="custom-city-group" class="form-group hidden" style="margin-top: -1rem; animation: fadeIn 0.3s ease;">
+      <label class="form-label" style="color: var(--accent);">🇺🇸 Enter USA City Name</label>
+      <input type="text" id="custom-city-input" class="form-control" placeholder="e.g. houston, seattle, phoenix...">
+      <p class="form-hint" style="font-size: 0.7rem; color: var(--text3); margin-top: 4px;">Must be a valid USA Craigslist subdomain.</p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Source</label>
+      <select id="source-select" class="form-control">
+        <option value="all">⚡ All Sources (Auto-Pipeline)</option>
+        <option value="craigslist">Craigslist (Fast/Reliable)</option>
+        <option value="sulekha">Sulekha (Rentals/Shared)</option>
+        <option value="zillow">Zillow (Beta - High Security)</option>
+        <option value="dubizzle">Dubizzle (Dubai Only)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Search Keyword</label>
+      <input type="text" id="scrape-query" class="form-control" placeholder="e.g. 3 bedroom apartment, luxury villa…">
+    </div>
+
+    <div class="form-row" style="display: flex; gap: 10px; margin-bottom: 1rem;">
+      <div style="flex: 1;">
+        <label class="form-label">Min Price</label>
+        <input type="number" id="min-price" class="form-control" placeholder="0">
+      </div>
+      <div style="flex: 1;">
+        <label class="form-label">Max Price</label>
+        <input type="number" id="max-price" class="form-control" placeholder="Max">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Min Bedrooms</label>
+      <select id="min-beds" class="form-control">
+        <option value="0">Studio+</option>
+        <option value="1">1+ BR</option>
+        <option value="2">2+ BR</option>
+        <option value="3">3+ BR</option>
+        <option value="4">4+ BR</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Listing Type</label>
+      <div class="radio-group">
+        <label class="radio-opt">
+          <input type="radio" name="ltype" value="rent" checked> <span>🏠 For Rent</span>
+        </label>
+        <label class="radio-opt">
+          <input type="radio" name="ltype" value="sale"> <span>🏷️ For Sale</span>
+        </label>
+      </div>
+    </div>
+
+    <button id="launch-btn" class="btn btn-primary btn-full" onclick="launchScrape()">
+      ⚡ Launch Scrape Job
+    </button>
+
+    <div id="job-progress" class="job-progress hidden">
+      <div class="jp-header">
+        <span id="jp-title">Starting…</span>
+        <span id="jp-pct">0%</span>
+      </div>
+      <div class="progress-bar progress-bar--lg">
+        <div class="progress-fill" id="jp-bar" style="width:0%"></div>
+      </div>
+      <div id="jp-status" class="jp-status">Initialising scraper…</div>
+    </div>
+
+    <div class="info-box">
+      <strong>ℹ What gets scraped</strong>
+      <ul>
+        <li>Title, price, description</li>
+        <li>Phone &amp; email (public only)</li>
+        <li>Beds, baths, sqft (via Groq AI)</li>
+        <li>City, listing URL, date posted</li>
+      </ul>
+      <p style="margin-top:.5rem;font-size:.8rem;opacity:.7">Rate limited to 1 req/sec. Max 50 listings/job.</p>
+    </div>
+  </div>
+
+  <!-- Jobs table -->
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Job History</h3>
+      <button class="btn btn-ghost btn-sm" onclick="location.reload()">↻ Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>#</th><th>City</th><th>Type</th><th>Status</th><th>Progress</th><th>Started</th></tr></thead>
+        <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td class="td-muted">#{{ job.id }}</td>
+          <td><strong>{{ job.city }}</strong></td>
+          <td><span class="badge badge-{{ 'blue' if job.listing_type=='sale' else 'amber' }}">{{ job.listing_type }}</span></td>
+          <td>
+            <span class="badge badge-{{ 'green' if job.status=='done' else 'amber' if job.status=='running' else 'red' if job.status=='error' else 'gray' }}">
+              {{ job.status }}
+            </span>
+          </td>
+          <td>
+            <div class="inline-progress">
+              <div class="progress-bar">
+                <div class="progress-fill" style="width:{{ (job.processed/job.total*100)|int if job.total else 0 }}%"></div>
+              </div>
+              <span class="td-muted">{{ job.processed }}/{{ job.total or '?' }}</span>
+            </div>
+          </td>
+          <td class="td-muted">{{ job.started_at[:16] if job.started_at else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="td-empty">No jobs yet. Launch one above!</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if jobs %}
+    <div class="panel-footer">{{ jobs|length }} job(s) shown</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let pollTimer = null;
+
+async function launchScrape() {
+  const citySelect = document.getElementById('city-select');
+  let city      = citySelect.value;
+  if (city === 'custom') {
+    city = document.getElementById('custom-city-input').value.trim().toLowerCase().replace(/\s+/g, '');
+    if (!city) {
+      alert('Please enter a USA city name.');
+      return;
+    }
+  }
+
+  const source  = document.getElementById('source-select').value;
+  const query   = document.getElementById('scrape-query').value.trim();
+  const minPrice= document.getElementById('min-price').value;
+  const maxPrice= document.getElementById('max-price').value;
+  const minBeds = document.getElementById('min-beds').value;
+  const ltype   = document.querySelector('input[name=ltype]:checked').value;
+  
+  const btn    = document.getElementById('launch-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting Deep Scrape…';
+
+  const res  = await fetch('/api/start_scrape', {
+    method:'POST', 
+    headers:{'Content-Type':'application/json'}, 
+    body: JSON.stringify({
+      city, 
+      source,
+      query,
+      min_price: minPrice,
+      max_price: maxPrice,
+      min_beds: minBeds,
+      listing_type: ltype
+    })
+  });
+  
+  const data = await res.json();
+  if (!data.ok) { 
+    btn.disabled=false; 
+    btn.textContent='⚡ Launch Scrape Job'; 
+    alert('Failed to start job: ' + (data.error || 'Unknown error'));
+    return; 
+  }
+
+  document.getElementById('job-progress').classList.remove('hidden');
+  pollJob(data.job_id);
+}
+
+function pollJob(id) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const r = await fetch(`/api/job_status/${id}`);
+    const j = await r.json();
+    const pct = j.total > 0 ? Math.round(j.processed / j.total * 100) : 0;
+    document.getElementById('jp-pct').textContent = pct + '%';
+    document.getElementById('jp-bar').style.width = pct + '%';
+    document.getElementById('jp-title').textContent = `Job #${id} — ${j.city} (${j.listing_type})`;
+    document.getElementById('jp-status').textContent = j.status === 'running'
+      ? `Scraped ${j.processed} of ${j.total || '?'} listings…`
+      : j.status === 'done' ? `✅ Done! ${j.processed} listings collected.`
+      : j.status === 'error' ? `❌ Error: ${j.error}`
+      : `Status: ${j.status}`;
+    if (j.status === 'done' || j.status === 'error') {
+      clearInterval(pollTimer);
+      document.getElementById('launch-btn').disabled = false;
+      document.getElementById('launch-btn').textContent = '⚡ Launch Scrape Job';
+      setTimeout(() => location.reload(), 2000);
+    }
+  }, 1500);
+}
+
+// Toggle Custom City Input
+document.getElementById('city-select').addEventListener('change', function() {
+  const customGroup = document.getElementById('custom-city-group');
+  if (this.value === 'custom') {
+    customGroup.classList.remove('hidden');
+    document.getElementById('custom-city-input').focus();
+  } else {
+    customGroup.classList.add('hidden');
+  }
+});
+</script>
+<style>
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+{% endblock %}

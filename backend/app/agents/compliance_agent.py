@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from langchain_groq import ChatGroq
 
+from ..core.config import GROQ_API_KEY_AGENTS
 from ..core.schemas import ChatMessage, ComplianceResult, LeadProfile
 
 
@@ -47,10 +48,11 @@ class ComplianceAgent:
         self._llm = self._build_llm()
 
     def _build_llm(self) -> Any:
-        if not os.getenv("GROQ_API_KEY"):
-            raise RuntimeError("GROQ_API_KEY is required for ComplianceAgent.")
-        model_name = os.getenv("COMPLIANCE_MODEL", "llama-3.3-70b-versatile")
-        return ChatGroq(model=model_name, temperature=0.2).with_structured_output(
+        api_key = GROQ_API_KEY_AGENTS or os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY_AGENTS or GROQ_API_KEY is required for ComplianceAgent.")
+        model_name = os.getenv("COMPLIANCE_MODEL", "llama-3.1-8b-instant")
+        return ChatGroq(api_key=api_key, model=model_name, temperature=0.2).with_structured_output(
             _ComplianceDetectionLLMOutput
         )
 

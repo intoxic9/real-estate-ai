@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, update
@@ -60,17 +61,81 @@ class AgentOrchestrator:
     def _set_state(self, session_id: str, state: Dict[str, Any]) -> None:
         self._session_state[session_id] = dict(state)
 
-    def _append_transcript(self, session_id: str, role: str, content: str) -> None:
-        self._session_transcript.setdefault(session_id, []).append(
-            {
-                "role": role,
-                "content": content,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+    async def _append_transcript(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        db: Optional[AsyncSession] = None,
+    ) -> None:
+        timestamp = datetime.now(timezone.utc)
+        entry = {
+            "role": role,
+            "content": content,
+            "timestamp": timestamp.isoformat(),
+        }
+        self._session_transcript.setdefault(session_id, []).append(entry)
 
-    def get_transcript(self, session_id: str) -> List[Dict[str, Any]]:
-        return list(self._session_transcript.get(session_id) or [])
+        if db is None:
+            return
+
+        try:
+            chat_role = ChatRole(role)
+        except Exception:
+            return
+
+        # Attach lead_id when known so /api/leads/{id} can reliably load transcript.
+        lead_id: Optional[UUID] = None
+        profile = self.get_profile(session_id)
+        if profile is not None:
+            try:
+                lead_id = UUID(str(profile.id))
+            except Exception:
+                lead_id = None
+
+        db.add(
+            ConversationTranscriptORM(
+                session_id=session_id,
+                lead_id=lead_id,
+                role=chat_role,
+                content=content,
+                timestamp=timestamp,
+            )
+        )
+        await db.commit()
+
+    async def get_transcript(
+        self,
+        session_id: str,
+        db: Optional[AsyncSession] = None,
+    ) -> List[Dict[str, Any]]:
+        in_memory = list(self._session_transcript.get(session_id) or [])
+        if in_memory:
+            return in_memory
+
+        if db is None:
+            return []
+
+        rows = (
+            await db.execute(
+                select(ConversationTranscriptORM)
+                .where(ConversationTranscriptORM.session_id == session_id)
+                .order_by(ConversationTranscriptORM.timestamp.asc(), ConversationTranscriptORM.id.asc())
+            )
+        ).scalars().all()
+        if not rows:
+            return []
+
+        restored = [
+            {
+                "role": row.role.value if isinstance(row.role, ChatRole) else str(row.role),
+                "content": row.content,
+                "timestamp": row.timestamp.isoformat(),
+            }
+            for row in rows
+        ]
+        self._session_transcript[session_id] = restored
+        return list(restored)
 
     def _is_user_end_chat(self, message: str) -> bool:
         text = message.strip().lower()
@@ -115,7 +180,7 @@ class AgentOrchestrator:
         partial: Dict[str, Any] = self._partial_results.get(session_id, {})
         pipeline_already_ran = bool(partial.get("pipeline_ran"))
 
-        self._append_transcript(session_id, "user", message)
+        await self._append_transcript(session_id, "user", message, db=db)
 
         # 1. Conversation agent
         conv_t0 = perf_counter()
@@ -132,7 +197,7 @@ class AgentOrchestrator:
             new_state["lead_profile"] = state_profile
         timings_ms["conversation_agent"] = round((perf_counter() - conv_t0) * 1000, 2)
         self._set_state(session_id, new_state)
-        self._append_transcript(session_id, "assistant", conv_result.response)
+        await self._append_transcript(session_id, "assistant", conv_result.response, db=db)
 
         state_profile = dict(new_state.get("lead_profile") or {})
         consent_from_profile = bool(state_profile.get("consent_given"))
@@ -146,16 +211,19 @@ class AgentOrchestrator:
                 "response": conv_result.response,
                 "pipeline_complete": False,
                 "lead_profile_updates": conv_result.lead_profile_updates,
+                "widget": conv_result.widget,
                 "timings_ms": timings_ms,
             }
 
         profile = self.get_profile(session_id)
-        transcript = self.get_transcript(session_id)
+        transcript = await self.get_transcript(session_id, db=db)
+        truncated_transcript = transcript[-10:] if len(transcript) > 10 else transcript
         if profile is None:
             return {
                 "response": conv_result.response,
                 "pipeline_complete": False,
                 "lead_profile_updates": conv_result.lead_profile_updates,
+                "widget": conv_result.widget,
                 "timings_ms": timings_ms,
                 "error": "Profile could not be constructed from session state.",
             }
@@ -222,7 +290,7 @@ class AgentOrchestrator:
 
         try:
             t0 = perf_counter()
-            compliance = await self.compliance_agent.evaluate(profile, transcript)
+            compliance = await self.compliance_agent.evaluate(profile, truncated_transcript)
             timings_ms["compliance_agent"] = round((perf_counter() - t0) * 1000, 2)
             partial["compliance"] = compliance.model_dump()
         except Exception as exc:
@@ -231,7 +299,7 @@ class AgentOrchestrator:
 
         try:
             t0 = perf_counter()
-            intent = await self.intent_agent.classify(profile, transcript)
+            intent = await self.intent_agent.classify(profile, truncated_transcript)
             timings_ms["intent_agent"] = round((perf_counter() - t0) * 1000, 2)
             partial["intent"] = intent.model_dump()
         except Exception as exc:
@@ -241,7 +309,7 @@ class AgentOrchestrator:
         try:
             if intent is not None:
                 t0 = perf_counter()
-                score = await self.scoring_agent.score(profile, intent, transcript)
+                score = await self.scoring_agent.score(profile, intent, truncated_transcript)
                 timings_ms["scoring_agent"] = round((perf_counter() - t0) * 1000, 2)
                 partial["score"] = score.model_dump()
         except Exception as exc:
@@ -279,6 +347,7 @@ class AgentOrchestrator:
         return {
             "response": conv_result.response,
             "pipeline_complete": True,
+            "widget": conv_result.widget,
             "lead_id": str(profile.id),
             "score": score.heat_score if score else None,
             "bucket": score.bucket.value if score else None,

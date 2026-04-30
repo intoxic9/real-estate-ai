@@ -26,7 +26,7 @@ ENV_PATH = BACKEND_ROOT / ".env"
 
 # Load environment variables from the backend .env file.
 if ENV_PATH.exists():
-    load_dotenv(ENV_PATH)
+    load_dotenv(ENV_PATH, override=True)
 else:
     # Fail fast if the expected .env is missing; this is a production system.
     raise RuntimeError(f".env file not found at expected path: {ENV_PATH}")
@@ -35,6 +35,12 @@ else:
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+
+
+# Groq API key split by task, with backwards-compatible fallback.
+GROQ_API_KEY_CHAT = os.getenv("GROQ_API_KEY_CHAT")
+GROQ_API_KEY_AGENTS = os.getenv("GROQ_API_KEY_AGENTS")
+GROQ_API_KEY_SEARCH = os.getenv("GROQ_API_KEY_SEARCH")
 
 
 def get_settings() -> Settings:
@@ -53,6 +59,12 @@ def get_settings() -> Settings:
         pgport = os.getenv("PGPORT", "5432")
 
         if all([pghost, pgdatabase, pguser, pgpassword, pgport]):
+            # Narrow Optional[str] to str for static type checkers.
+            assert pghost is not None
+            assert pgdatabase is not None
+            assert pguser is not None
+            assert pgpassword is not None
+            assert pgport is not None
             # URL-encode username/password safely.
             user_enc = quote(pguser, safe="")
             pass_enc = quote(pgpassword, safe="")
@@ -67,5 +79,13 @@ def get_settings() -> Settings:
     return Settings(database_url=db_url)
 
 
-__all__ = ["Settings", "get_settings", "BACKEND_ROOT", "ENV_PATH"]
+__all__ = [
+    "Settings",
+    "get_settings",
+    "BACKEND_ROOT",
+    "ENV_PATH",
+    "GROQ_API_KEY_CHAT",
+    "GROQ_API_KEY_AGENTS",
+    "GROQ_API_KEY_SEARCH",
+]
 

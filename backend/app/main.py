@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import asyncio
+from datetime import datetime
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -30,6 +31,7 @@ from .api.routes.mortgage import router as mortgage_router
 from .api.routes.notifications import router as notifications_router
 from .api.routes.neighborhood import router as neighborhood_router
 from .api.routes.signals import router as signals_router
+from .api.routes.scraper import router as scraper_router
 from .api.routes.valuation import router as valuation_router
 from .core.database import Base, engine
 from .core.database import AsyncSessionLocal
@@ -122,6 +124,18 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def catch_exceptions(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        import traceback
+
+        with open("error_log.txt", "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now()}: {traceback.format_exc()}\n")
+        raise
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -138,6 +152,7 @@ app.include_router(analytics_router)
 app.include_router(market_router)
 app.include_router(mortgage_router)
 app.include_router(signals_router)
+app.include_router(scraper_router)
 app.include_router(notifications_router)
 app.include_router(valuation_router)
 app.include_router(neighborhood_router)

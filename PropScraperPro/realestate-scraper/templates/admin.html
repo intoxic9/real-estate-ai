@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}— Admin{% endblock %}
+{% block content %}
+
+{% if not session.get('admin_logged_in') %}
+<!-- LOGIN -->
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">⬡</div>
+    <h2 class="auth-title">Admin Login</h2>
+    <p class="auth-sub">Default: admin / admin123</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" class="auth-form">
+      <input type="hidden" name="action" value="login">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input type="text" name="username" class="form-control" required autofocus>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input type="password" name="password" class="form-control" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+    </form>
+  </div>
+</div>
+
+{% else %}
+<!-- ADMIN PANEL -->
+<div class="page-header">
+  <h1 class="page-title">Admin Panel</h1>
+  <div class="page-actions">
+    <span class="admin-user">👤 {{ session.admin_user }}</span>
+    <form method="post" style="display:inline">
+      <input type="hidden" name="action" value="logout">
+      <button class="btn btn-ghost btn-sm">Sign Out</button>
+    </form>
+  </div>
+</div>
+
+{% if sync_result %}<div class="alert alert-{{ 'success' if 'Synced' in sync_result else 'error' }}">{{ sync_result }}</div>{% endif %}
+
+<div class="admin-grid">
+
+  <!-- API KEYS -->
+  <div class="panel">
+    <div class="panel-header"><h3>🤖 Groq API Key</h3></div>
+    <form method="post">
+      <input type="hidden" name="action" value="save_config">
+      <div class="form-group">
+        <label class="form-label">Groq API Key</label>
+        <div class="input-mask-wrap">
+          <input type="password" name="groq_api_key" id="groq-key" class="form-control font-mono"
+            value="{{ cfg.groq_api_key }}" placeholder="gsk_…" autocomplete="off">
+          <button type="button" class="mask-toggle" onclick="toggleMask('groq-key',this)">👁</button>
+        </div>
+        <p class="form-hint">Get a free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a>. Used to extract structured data via Llama 3.</p>
+      </div>
+      <div class="key-status" id="groq-status">
+        {% if cfg.groq_api_key %}
+        <span class="badge badge-green">✓ Key configured</span>
+        {% else %}
+        <span class="badge badge-gray">Not configured — AI extraction disabled</span>
+        {% endif %}
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm" style="margin-top:1rem">Save Groq Key</button>
+    </form>
+    <div class="admin-divider"></div>
+    <form method="post">
+      <input type="hidden" name="action" value="save_config">
+      <div class="panel-header" style="padding:0 0 .75rem"><h3>📊 Google Sheets</h3></div>
+      <div class="form-group">
+        <label class="form-label">Google Sheet ID</label>
+        <input type="text" name="google_sheet_id" class="form-control font-mono"
+          value="{{ cfg.google_sheet_id }}" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms">
+        <p class="form-hint">The long ID from your Google Sheet URL.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Service Account JSON</label>
+        <textarea name="google_creds" class="form-control font-mono" rows="6"
+          placeholder='{"type": "service_account", "project_id": "…", …}'>{{ cfg.google_creds | tojson if cfg.google_creds else '' }}</textarea>
+        <p class="form-hint">Paste the full JSON from your Google Cloud service account key. Share the Sheet with the service account email.</p>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary btn-sm">Save Sheet Config</button>
+      </div>
+    </form>
+    <form method="post" style="margin-top:.75rem">
+      <input type="hidden" name="action" value="sync_sheet">
+      <button type="submit" class="btn btn-ghost btn-sm btn-full">☁ Sync Unsynced Listings → Sheet</button>
+    </form>
+  </div>
+
+  <!-- INSTRUCTIONS -->
+  <div class="panel">
+    <div class="panel-header"><h3>📖 Setup Guide</h3></div>
+    <div class="guide-steps">
+      <div class="guide-step">
+        <div class="gs-num">1</div>
+        <div class="gs-body">
+          <strong>Get Groq API key</strong>
+          <p>Go to <a href="https://console.groq.com" target="_blank">console.groq.com</a> → API Keys → Create key. It's free. Paste it above.</p>
+        </div>
+      </div>
+      <div class="guide-step">
+        <div class="gs-num">2</div>
+        <div class="gs-body">
+          <strong>Create a Google Cloud project</strong>
+          <p>Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> → New Project → Enable the Google Sheets API.</p>
+        </div>
+      </div>
+      <div class="guide-step">
+        <div class="gs-num">3</div>
+        <div class="gs-body">
+          <strong>Create a service account</strong>
+          <p>IAM & Admin → Service Accounts → Create → Download JSON key. Paste the JSON above.</p>
+        </div>
+      </div>
+      <div class="guide-step">
+        <div class="gs-num">4</div>
+        <div class="gs-body">
+          <strong>Share your Google Sheet</strong>
+          <p>Open your Sheet → Share → paste the service account email (from the JSON). Give Editor access.</p>
+        </div>
+      </div>
+      <div class="guide-step">
+        <div class="gs-num">5</div>
+        <div class="gs-body">
+          <strong>Add the Sheet ID</strong>
+          <p>Copy the ID from the URL: <code>docs.google.com/spreadsheets/d/<strong>[SHEET_ID]</strong>/edit</code></p>
+        </div>
+      </div>
+      <div class="guide-step">
+        <div class="gs-num">6</div>
+        <div class="gs-body">
+          <strong>Run a scrape & sync</strong>
+          <p>Go to Scraper → launch a job → come back here → click "Sync Unsynced Listings".</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="admin-divider"></div>
+    <div class="panel-header"><h3>🔐 Change Password</h3></div>
+    <form method="post">
+      <input type="hidden" name="action" value="change_password">
+      <div class="form-group">
+        <label class="form-label">New password</label>
+        <input type="password" name="new_password" class="form-control" placeholder="Enter new password" required>
+      </div>
+      <button type="submit" class="btn btn-ghost btn-sm">Update Password</button>
+    </form>
+  </div>
+
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+function toggleMask(id, btn) {
+  const el = document.getElementById(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.textContent = el.type === 'password' ? '👁' : '🙈';
+}
+</script>
+{% endblock %}
