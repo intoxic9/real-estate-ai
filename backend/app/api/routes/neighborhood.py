@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from langchain_groq import ChatGroq
 
+from ...core.config import GROQ_API_KEY_SEARCH
 from ...core.database import get_db
 from ...core.schemas import MarketSnapshotORM
 
@@ -203,10 +204,11 @@ async def get_neighborhood_report(
         "trending_up" if home_price_trend > 2 else "cooling" if home_price_trend < -2 else "stable"
     )
 
-    if os.getenv("GROQ_API_KEY", "").strip():
+    api_key = (GROQ_API_KEY_SEARCH or os.getenv("GROQ_API_KEY", "")).strip()
+    if api_key:
         try:
-            model_name = os.getenv("INTENT_MODEL", "llama-3.3-70b-versatile")
-            llm = ChatGroq(model=model_name, temperature=0.2).with_structured_output(_NeighborhoodLLMOutput)
+            model_name = os.getenv("NEIGHBORHOOD_MODEL", "llama-3.3-70b-versatile")
+            llm = ChatGroq(api_key=api_key, model=model_name, temperature=0.7).with_structured_output(_NeighborhoodLLMOutput)
             llm_out = await llm.ainvoke(
                 [
                     (

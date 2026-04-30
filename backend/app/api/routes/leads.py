@@ -133,40 +133,8 @@ async def list_leads(
     db: AsyncSession = Depends(get_db),
 ) -> LeadListResponse:
     """
-    List leads with basic filtering and pagination. Returns mock data for now.
+    List leads with basic filtering and pagination.
     """
-
-    _ = db
-    now = datetime.now(timezone.utc)
-
-    lead = LeadProfile(
-        full_name=None,
-        email=None,
-        phone=None,
-        property_type="apartment",  # type: ignore[arg-type]
-        source="chatbot",
-        created_at=now,
-        updated_at=now,
-    )
-
-    score = ScoreResult(
-        lead_id=lead.id,
-        heat_score=85,
-        bucket="hot",  # type: ignore[arg-type]
-        signals=["High budget", "Immediate timeline"],
-        timestamp=now,
-    )
-
-    compliance = ComplianceResult(
-        lead_id=lead.id,
-        consent_verified=True,
-        pii_redacted=True,
-        blocked_claims=[],
-        sanitized_transcript="",
-        compliant=True,
-        timestamp=now,
-    )
-
     _ = LeadListQueryParams(
         page=page,
         page_size=page_size,
@@ -176,15 +144,108 @@ async def list_leads(
         date_to=date_to,
     )
 
-    return LeadListResponse(
-        items=[
+    query = select(LeadProfileORM)
+    if intent is not None:
+        query = query.where(LeadProfileORM.intent == intent)
+    if date_from is not None:
+        query = query.where(LeadProfileORM.created_at >= date_from)
+    if date_to is not None:
+        query = query.where(LeadProfileORM.created_at <= date_to)
+
+    lead_rows = (
+        await db.execute(
+            query.order_by(LeadProfileORM.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).scalars().all()
+
+    total = (await db.execute(query.with_only_columns(LeadProfileORM.id))).scalars().all()
+    total_count = len(total)
+
+    items: List[LeadListItem] = []
+    for lead_row in lead_rows:
+        latest_score_row = (
+            await db.execute(
+                select(ScoreResultORM)
+                .where(ScoreResultORM.lead_id == lead_row.id)
+                .order_by(ScoreResultORM.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        if bucket is not None and (
+            latest_score_row is None or latest_score_row.bucket != bucket
+        ):
+            continue
+
+        latest_compliance_row = (
+            await db.execute(
+                select(ComplianceResultORM)
+                .where(ComplianceResultORM.lead_id == lead_row.id)
+                .order_by(ComplianceResultORM.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        lead = LeadProfile(
+            id=lead_row.id,
+            full_name=lead_row.full_name,
+            email=lead_row.email,
+            phone=lead_row.phone,
+            intent=lead_row.intent,
+            budget_min=lead_row.budget_min,
+            budget_max=lead_row.budget_max,
+            target_market=lead_row.target_market,
+            preferred_locations=list(lead_row.preferred_locations or []),
+            timeline=lead_row.timeline,
+            property_type=lead_row.property_type,
+            financing_type=lead_row.financing_type,
+            is_first_time_buyer=lead_row.is_first_time_buyer,
+            consent_given=lead_row.consent_given,
+            consent_timestamp=lead_row.consent_timestamp,
+            source=lead_row.source,
+            created_at=lead_row.created_at,
+            updated_at=lead_row.updated_at,
+        )
+
+        latest_score = (
+            ScoreResult(
+                lead_id=latest_score_row.lead_id,
+                heat_score=latest_score_row.heat_score,
+                bucket=latest_score_row.bucket,
+                signals=list(latest_score_row.signals or []),
+                timestamp=latest_score_row.timestamp,
+            )
+            if latest_score_row is not None
+            else None
+        )
+
+        latest_compliance = (
+            ComplianceResult(
+                lead_id=latest_compliance_row.lead_id,
+                consent_verified=latest_compliance_row.consent_verified,
+                pii_redacted=latest_compliance_row.pii_redacted,
+                blocked_claims=list(latest_compliance_row.blocked_claims or []),
+                sanitized_transcript=latest_compliance_row.sanitized_transcript,
+                compliant=latest_compliance_row.compliant,
+                timestamp=latest_compliance_row.timestamp,
+            )
+            if latest_compliance_row is not None
+            else None
+        )
+
+        items.append(
             LeadListItem(
                 lead=lead,
-                latest_score=score,
-                latest_compliance=compliance,
+                latest_score=latest_score,
+                latest_compliance=latest_compliance,
             )
-        ],
-        total=1,
+        )
+
+    return LeadListResponse(
+        items=items,
+        total=total_count,
         page=page,
         page_size=page_size,
     )

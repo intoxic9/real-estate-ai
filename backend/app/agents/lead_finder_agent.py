@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import GROQ_API_KEY_SEARCH
 from ..core.schemas import LeadIntent, LeadSignalORM, SignalIntentLevel, SignalSource
 
 try:
@@ -85,14 +86,21 @@ class SignalClassification(BaseModel):
     rationale: str
 
 
+class IntentClassification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
 class LeadFinderAgent:
     def __init__(self) -> None:
         self.reddit_client_id = os.getenv("REDDIT_CLIENT_ID", "").strip()
         self.reddit_client_secret = os.getenv("REDDIT_CLIENT_SECRET", "").strip()
         self.reddit_user_agent = os.getenv("REDDIT_USER_AGENT", "LeadIntelBot/1.0").strip()
         self.twitter_bearer_token = os.getenv("TWITTER_BEARER_TOKEN", "").strip()
-        self.groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
-        self.model_name = os.getenv("INTENT_MODEL", "llama-3.3-70b-versatile")
+        self.groq_api_key = (GROQ_API_KEY_SEARCH or os.getenv("GROQ_API_KEY", "")).strip()
+        self.model_name = os.getenv("LEAD_FINDER_MODEL", "llama-3.1-8b-instant")
         self.target_subreddits = [
             s.strip() for s in os.getenv("LEAD_FINDER_SUBREDDITS", ",".join(DEFAULT_SUBREDDITS)).split(",") if s.strip()
         ]
@@ -121,6 +129,52 @@ class LeadFinderAgent:
             return LeadIntent.buyer_primary
         return LeadIntent.unknown
 
+    async def _classify_apparent_intent(self, content: str) -> LeadIntent:
+        if self.groq_api_key:
+            llm = ChatGroq(
+                api_key=self.groq_api_key,
+                model=self.model_name,
+                temperature=0.2,
+            ).with_structured_output(IntentClassification)
+            prompt = (
+                "Classify the intent of this social media post about real estate.\n\n"
+                "Categories:\n"
+                "- buyer_primary: Person wants to buy a home to LIVE IN\n"
+                "- buyer_investment: Person wants to buy property as an INVESTMENT\n"
+                "  (rental income, appreciation, vacation rental, second home)\n"
+                "- seller: Person wants to SELL property they already own\n"
+                "- renter: Person is looking to RENT a place to live\n"
+                "- refinance: Person wants to refinance existing mortgage\n"
+                "- not_relevant: Post is not about a real estate transaction\n\n"
+                "Key signals:\n"
+                "- 'buying property' / 'considering buying' / 'save for down payment' = BUYER\n"
+                "- 'rental income' / 'renting it out' / 'investment' / 'appreciation' = buyer_investment\n"
+                "- 'selling my house' / 'listing my property' / 'what is my home worth' = seller\n"
+                "- 'looking for an apartment' / 'need a place to rent' = renter\n\n"
+                "IMPORTANT: Someone who wants to BUY property and RENT IT OUT is a\n"
+                "buyer_investment, NOT a seller. They are buying, not selling.\n\n"
+                'Return ONLY valid JSON: {"intent": "...", "confidence": 0.0-1.0}\n\n'
+                f"Post:\n{content}"
+            )
+            try:
+                result = await llm.ainvoke(prompt)
+                intent_raw = (result.intent or "").strip().lower()
+                intent_map: dict[str, LeadIntent] = {
+                    "buyer_primary": LeadIntent.buyer_primary,
+                    "buyer_investment": LeadIntent.buyer_investment,
+                    "seller": LeadIntent.seller,
+                    "renter": LeadIntent.renter,
+                    "refinance": LeadIntent.refinance,
+                    "not_relevant": LeadIntent.unknown,
+                }
+                mapped = intent_map.get(intent_raw)
+                if mapped is not None:
+                    return mapped
+            except Exception:
+                pass
+
+        return self._infer_apparent_intent(content)
+
     @staticmethod
     def _score_signal(text: str) -> int:
         lower = text.lower()
@@ -142,7 +196,7 @@ class LeadFinderAgent:
             llm = ChatGroq(
                 api_key=self.groq_api_key,
                 model=self.model_name,
-                temperature=0.1,
+                temperature=0.2,
             ).with_structured_output(SignalClassification)
             prompt = (
                 "Classify real-estate public signal intent level.\n"
@@ -188,7 +242,7 @@ class LeadFinderAgent:
             return existing_signal
 
         locations = self._extract_locations(content)
-        apparent_intent = self._infer_apparent_intent(content)
+        apparent_intent = await self._classify_apparent_intent(content)
         score = self._score_signal(content)
         intent_level = await self._classify_intent_level(content, score)
 

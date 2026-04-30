@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}— Dashboard{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Dashboard</h1>
+  <div class="page-actions">
+    <a href="/api/export_csv" class="btn btn-ghost btn-sm">⬇ Export CSV</a>
+    <a href="{{ url_for('scraper') }}" class="btn btn-primary btn-sm">+ New Scrape</a>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-icon">📋</div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.total }}</div>
+      <div class="stat-label">Total Listings</div>
+    </div>
+  </div>
+  <div class="stat-card stat-card--green">
+    <div class="stat-icon">📞</div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.with_phone }}</div>
+      <div class="stat-label">With Phone</div>
+    </div>
+  </div>
+  <div class="stat-card stat-card--blue">
+    <div class="stat-icon">✉️</div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.with_email }}</div>
+      <div class="stat-label">With Email</div>
+    </div>
+  </div>
+  <div class="stat-card stat-card--amber">
+    <div class="stat-icon">☁️</div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.synced }}</div>
+      <div class="stat-label">Synced to Sheet</div>
+    </div>
+  </div>
+  <div class="stat-card stat-card--purple">
+    <div class="stat-icon">⚙️</div>
+    <div class="stat-body">
+      <div class="stat-value">{{ stats.jobs }}</div>
+      <div class="stat-label">Scrape Jobs</div>
+    </div>
+  </div>
+</div>
+
+<div class="dash-grid">
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Recent Listings</h3>
+      <a href="{{ url_for('listings') }}" class="panel-link">View all →</a>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Title</th><th>Price</th><th>City</th><th>Phone</th><th>Type</th><th>Source</th></tr></thead>
+        <tbody>
+        {% for l in recent %}
+        <tr>
+          <td><a href="{{ l.url }}" target="_blank" class="link-primary" title="{{ l.title }}">{{ l.title[:45] }}{% if l.title|length > 45 %}…{% endif %}</a></td>
+          <td class="td-price">{{ l.price or '—' }}</td>
+          <td>{{ l.city or '—' }}</td>
+          <td>{% if l.phone %}<span class="badge badge-green">{{ l.phone }}</span>{% else %}<span class="badge badge-gray">—</span>{% endif %}</td>
+          <td><span class="badge badge-{{ 'blue' if l.listing_type=='sale' else 'amber' }}">{{ l.listing_type }}</span></td>
+          <td class="td-muted">{{ l.source }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="td-empty">No listings yet. <a href="{{ url_for('scraper') }}">Start a scrape →</a></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Recent Jobs</h3>
+      <a href="{{ url_for('scraper') }}" class="panel-link">View all →</a>
+    </div>
+    {% for job in jobs %}
+    <div class="job-item">
+      <div class="job-info">
+        <span class="job-city">{{ job.city }}</span>
+        <span class="badge badge-{{ 'green' if job.status=='done' else 'amber' if job.status=='running' else 'red' if job.status=='error' else 'gray' }}">{{ job.status }}</span>
+      </div>
+      <div class="job-meta">{{ job.listing_type }} · {{ job.processed }}/{{ job.total }} listings</div>
+      {% if job.status == 'running' %}
+      <div class="progress-bar"><div class="progress-fill" style="width:{{ (job.processed/job.total*100)|int if job.total else 0 }}%"></div></div>
+      {% endif %}
+      <div class="job-time">{{ job.started_at or '—' }}</div>
+    </div>
+    {% else %}
+    <div class="td-empty" style="padding:2rem">No jobs yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

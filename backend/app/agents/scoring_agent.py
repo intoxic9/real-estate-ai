@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from langchain_groq import ChatGroq
 
+from ..core.config import GROQ_API_KEY_AGENTS
 from ..core.schemas import (
     ChatMessage,
     FinancingType,
@@ -61,10 +62,11 @@ class ScoringAgent:
 
     @staticmethod
     def _build_reasoning_llm() -> Optional[Any]:
-        if not os.getenv("GROQ_API_KEY"):
+        api_key = GROQ_API_KEY_AGENTS or os.getenv("GROQ_API_KEY")
+        if not api_key:
             return None
-        model = os.getenv("SCORING_REASONING_MODEL", "llama-3.3-70b-versatile")
-        return ChatGroq(model=model, temperature=0.2).with_structured_output(
+        model = os.getenv("SCORING_REASONING_MODEL", "llama-3.1-8b-instant")
+        return ChatGroq(api_key=api_key, model=model, temperature=0.3).with_structured_output(
             _ReasoningOutput
         )
 

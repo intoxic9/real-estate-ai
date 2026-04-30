@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}— Real Estate Intelligence{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <div class="hero-badge">AI-Powered · Free · Legal</div>
+  <h1 class="hero-title">Real Estate<br><em>Intelligence</em><br>Platform</h1>
+  <p class="hero-sub">Automatically collect seller &amp; buyer contact data from public listings across Craigslist and more. Powered by Groq AI. Synced to Google Sheets.</p>
+  <div class="hero-cta">
+    <a href="{{ url_for('scraper') }}" class="btn btn-primary">Start Scraping</a>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-ghost">View Dashboard</a>
+  </div>
+  <div class="hero-stats">
+    <div class="hstat"><span class="hstat-n" id="hs-total">—</span><span class="hstat-l">Listings</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n" id="hs-phone">—</span><span class="hstat-l">With Phone</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n" id="hs-email">—</span><span class="hstat-l">With Email</span></div>
+    <div class="hstat-div"></div>
+    <div class="hstat"><span class="hstat-n" id="hs-synced">—</span><span class="hstat-l">Synced</span></div>
+  </div>
+</section>
+
+<section class="features">
+  <h2 class="section-title">Everything you need</h2>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="fc-icon">🔍</div>
+      <h3>Smart Scraping</h3>
+      <p>Pulls public listings from Craigslist RSS feeds — no login required, robots.txt compliant, rate-limited.</p>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">🤖</div>
+      <h3>Groq AI Extraction</h3>
+      <p>Llama 3 via Groq API intelligently extracts phone, email, price, beds/baths from unstructured listing text.</p>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">📊</div>
+      <h3>Google Sheets Sync</h3>
+      <p>One-click sync pushes all collected data directly to your Google Sheet for team collaboration.</p>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">📥</div>
+      <h3>CSV Export</h3>
+      <p>Download all listings as a CSV file at any time for offline analysis or CRM import.</p>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">🔐</div>
+      <h3>Admin Panel</h3>
+      <p>Secure admin area to manage API keys, Google credentials, and user access.</p>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">⚡</div>
+      <h3>Real-time Jobs</h3>
+      <p>Background scrape jobs with live progress tracking — start a job and watch it run.</p>
+    </div>
+  </div>
+</section>
+
+<section class="how-it-works">
+  <h2 class="section-title">How it works</h2>
+  <div class="steps">
+    <div class="step"><div class="step-num">01</div><div class="step-body"><h4>Configure</h4><p>Add your Groq API key and Google Sheets credentials in the Admin panel.</p></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-num">02</div><div class="step-body"><h4>Scrape</h4><p>Choose a city and listing type, then launch a background scrape job.</p></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-num">03</div><div class="step-body"><h4>Enrich</h4><p>Groq AI parses contact info, beds, baths and price from each listing automatically.</p></div></div>
+    <div class="step-arrow">→</div>
+    <div class="step"><div class="step-num">04</div><div class="step-body"><h4>Sync</h4><p>Push everything to Google Sheets or download as CSV — ready for your team.</p></div></div>
+  </div>
+</section>
+
+<script>
+fetch('/api/stats').then(r=>r.json()).then(d=>{
+  document.getElementById('hs-total').textContent = d.total.toLocaleString();
+  document.getElementById('hs-phone').textContent = d.with_phone.toLocaleString();
+  document.getElementById('hs-email').textContent = d.with_email.toLocaleString();
+  document.getElementById('hs-synced').textContent = d.synced.toLocaleString();
+});
+</script>
+{% endblock %}

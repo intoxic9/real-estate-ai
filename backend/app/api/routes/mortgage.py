@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from langchain_groq import ChatGroq
 
+from ...core.config import GROQ_API_KEY_SEARCH
 from ...core.database import get_db
 from ...core.schemas import MarketSnapshotORM
 
@@ -202,10 +203,11 @@ async def calculate_mortgage(
         "Based on your income, debt, and down payment, you may fit best in a conventional or FHA path. "
         "Focus on cities where your affordability exceeds 80% and keep total DTI below program limits."
     )
-    if os.getenv("GROQ_API_KEY", "").strip():
+    api_key = (GROQ_API_KEY_SEARCH or os.getenv("GROQ_API_KEY", "")).strip()
+    if api_key:
         try:
-            model_name = os.getenv("INTENT_MODEL", "llama-3.3-70b-versatile")
-            llm = ChatGroq(model=model_name, temperature=0.2)
+            model_name = os.getenv("MORTGAGE_MODEL", "llama-3.1-8b-instant")
+            llm = ChatGroq(api_key=api_key, model=model_name, temperature=0.3)
             prompt = (
                 "You are a mortgage advisor assistant. Provide a concise, practical recommendation in 3-4 sentences.\n"
                 f"Annual income: {payload.annual_income}\n"

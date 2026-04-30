@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from langchain_groq import ChatGroq
 
+from ..core.config import GROQ_API_KEY_AGENTS
 from ..core.schemas import ChatMessage, IntentResult, LeadIntent, LeadProfile
 
 
@@ -43,10 +44,11 @@ class IntentAgent:
     """
 
     def __init__(self) -> None:
-        if not os.getenv("GROQ_API_KEY"):
-            raise RuntimeError("GROQ_API_KEY is required for IntentAgent.")
+        self._api_key = GROQ_API_KEY_AGENTS or os.getenv("GROQ_API_KEY")
+        if not self._api_key:
+            raise RuntimeError("GROQ_API_KEY_AGENTS or GROQ_API_KEY is required for IntentAgent.")
         self._model_name = os.getenv("INTENT_MODEL", "llama-3.3-70b-versatile")
-        self._temperatures = (0.2, 0.3, 0.4)
+        self._temperatures = (0.3, 0.3, 0.3)
 
     @staticmethod
     def _normalize_transcript(transcript: Any) -> str:
@@ -104,7 +106,7 @@ Return ONLY the structured output.
         transcript_text: str,
         temperature: float,
     ) -> _IntentLLMOutput:
-        llm = ChatGroq(model=self._model_name, temperature=temperature).with_structured_output(
+        llm = ChatGroq(api_key=self._api_key, model=self._model_name, temperature=temperature).with_structured_output(
             _IntentLLMOutput
         )
         result = cast(

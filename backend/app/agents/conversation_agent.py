@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from langchain_groq import ChatGroq
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import GROQ_API_KEY_CHAT
 from ..core.schemas import (
     ChatRole,
     ConversationTranscriptORM,
@@ -40,6 +41,7 @@ class ConversationStage(str, Enum):
     GREETING = "GREETING"
     INTENT_DISCOVERY = "INTENT_DISCOVERY"
     DETAILS_COLLECTION = "DETAILS_COLLECTION"
+    PERSONAL_INFO = "PERSONAL_INFO"
     CONSENT = "CONSENT"
     SUMMARY = "SUMMARY"
 
@@ -67,6 +69,7 @@ class AgentTurnResult(BaseModel):
     is_complete: bool
     consent_requested: bool
     consent_given: bool
+    widget: Optional[Dict[str, Any]] = None
 
 
 class _LLMOutput(BaseModel):
@@ -122,16 +125,23 @@ RULES YOU MUST FOLLOW:
    classes under Fair Housing Act
 
 Behavior:
-- Maintain stage flow: GREETING -> INTENT_DISCOVERY -> DETAILS_COLLECTION -> CONSENT -> SUMMARY
+- Maintain stage flow: GREETING -> INTENT_DISCOVERY -> DETAILS_COLLECTION -> PERSONAL_INFO -> CONSENT -> SUMMARY
 - Ask only the minimum necessary questions based on known data
 - Handle missing information gracefully (never force answers)
 - If user declines PII sharing, offer analytics-only mode
 - Speak naturally, never like a rigid form
 
+IMPORTANT: You MUST ask for and collect the user's name before asking for consent.
+You must also collect either an email address or phone number. Never skip these fields.
+Ask naturally:
+- "What's your name?" or "Who am I speaking with today?"
+- "What's the best email or phone to reach you at?"
+These are required for our team to follow up.
+
 Extraction rules for lead_profile_updates:
 - Capture partial fields when user provides them: intent, target_market, preferred_locations,
   timeline, property_type, budget_min, budget_max, financing_type, is_first_time_buyer, source.
-- If consent has NOT been given, DO NOT include full_name, email, or phone.
+- Capture full_name, email, and phone when provided so you can complete PERSONAL_INFO before CONSENT.
 - If consent is denied, set analytics_only=true.
 
 Return ONLY a JSON object matching the output schema.
@@ -143,9 +153,10 @@ def _model_name() -> str:
 
 
 def _llm() -> ChatGroq:
-    if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError("GROQ_API_KEY is required for ConversationAgent.")
-    return ChatGroq(model=_model_name(), temperature=0.7)
+    api_key = GROQ_API_KEY_CHAT or os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY_CHAT or GROQ_API_KEY is required for ConversationAgent.")
+    return ChatGroq(api_key=api_key, model=_model_name(), temperature=0.7)
 
 
 def _safe_bool(x: Any) -> bool:
@@ -237,13 +248,30 @@ def _heuristic_updates_from_text(text: str) -> Dict[str, Any]:
     elif any(x in t for x in buy_signals):
         updates["intent"] = LeadIntent.buyer_primary
 
-    # Contact extraction (kept in turn updates, persisted to profile only after consent).
-    email_match = re.search(r"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", text, re.IGNORECASE)
-    phone_match = re.search(r"(?<!\d)(?:\+?1[\s\-\.]?)?(?:\(?\d{3}\)?[\s\-\.]?)\d{3}[\s\-\.]?\d{4}(?!\d)", text)
+    # Personal info extraction.
+    name_patterns = [
+        r"\bmy name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\bi am\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\bi'm\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\bthis is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+        r"\bcall me\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b",
+    ]
+    for pattern in name_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            updates["full_name"] = match.group(1).strip()
+            break
+    if "full_name" not in updates:
+        proper_name_match = re.search(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b", text)
+        if proper_name_match:
+            updates["full_name"] = proper_name_match.group(1).strip()
+
+    email_match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
+    phone_match = re.search(r"[\+]?\s*1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", text)
     if email_match:
-        updates["email"] = email_match.group(0)
+        updates["email"] = email_match.group()
     if phone_match:
-        updates["phone"] = phone_match.group(0)
+        updates["phone"] = phone_match.group().strip()
 
     # Financing extraction.
     if "fha" in t:
@@ -491,6 +519,14 @@ def _is_field_present(value: Any) -> bool:
     return True
 
 
+def _has_required_personal_info(lead_profile: Dict[str, Any]) -> bool:
+    has_name = _is_field_present(lead_profile.get("full_name"))
+    has_contact = _is_field_present(lead_profile.get("email")) or _is_field_present(
+        lead_profile.get("phone")
+    )
+    return has_name and has_contact
+
+
 def _missing_fields_for_flow(lead_profile: Dict[str, Any], intent: LeadIntent, consent_given: bool) -> list[str]:
     """
     Determine which fields are still missing by intent flow so we can avoid
@@ -521,6 +557,52 @@ def _missing_fields_for_flow(lead_profile: Dict[str, Any], intent: LeadIntent, c
     if not consent_given:
         missing.append("consent")
     return missing
+
+
+def _build_widget_for_turn(
+    *,
+    previous_stage: ConversationStage,
+    response_text: str,
+    missing_fields: list[str],
+) -> Optional[Dict[str, Any]]:
+    text = response_text.lower()
+
+    # After greeting.
+    if previous_stage == ConversationStage.GREETING:
+        return {
+            "type": "quick_replies",
+            "options": ["Primary Residence", "Investment Property", "Vacation Home"],
+        }
+
+    # After asking property type.
+    if "what type of property" in text:
+        return {
+            "type": "quick_replies",
+            "options": ["Single Family", "Condo/Apartment", "Townhouse"],
+        }
+
+    # After asking timeline.
+    if "when are you hoping" in text or "timeline" in text:
+        return {
+            "type": "quick_replies",
+            "options": ["ASAP", "1-3 Months", "6+ Months", "Just Exploring"],
+        }
+
+    # After asking budget/price.
+    if (
+        "budget" in text
+        or "asking price" in text
+        or "estimated value" in text
+        or "asking rent" in text
+        or "asking_price_or_rent" in missing_fields
+    ):
+        return {
+            "type": "budget_slider",
+            "min": 50000,
+            "max": 2000000,
+        }
+
+    return None
 
 
 class ConversationAgent:
@@ -692,11 +774,7 @@ class ConversationAgent:
             lead_profile["consent_given"] = True
             lead_profile["consent_timestamp"] = now
 
-        # If consent is not yet given, do not persist PII into state (but keep in turn updates).
         state_updates = dict(updates)
-        if not consent_given and any(k in state_updates for k in PII_FIELDS):
-            state_updates = _strip_pii(state_updates)
-            llm_consent_requested = True
 
         # Apply state-safe updates.
         lead_profile.update({k: v for k, v in state_updates.items() if v is not None})
@@ -712,10 +790,14 @@ class ConversationAgent:
         force_consent_now = turn_count >= 12 and not consent_given
 
         # If we have enough details, move to CONSENT unless analytics-only.
-        if next_stage in {ConversationStage.GREETING, ConversationStage.INTENT_DISCOVERY, ConversationStage.DETAILS_COLLECTION}:
+        if next_stage in {
+            ConversationStage.GREETING,
+            ConversationStage.INTENT_DISCOVERY,
+            ConversationStage.DETAILS_COLLECTION,
+            ConversationStage.PERSONAL_INFO,
+        }:
             if _is_complete(lead_profile, consent_given=False, analytics_only=True) and not analytics_only:
-                next_stage = ConversationStage.CONSENT
-                consent_requested = True
+                next_stage = ConversationStage.PERSONAL_INFO
 
         # If consent denied, proceed to SUMMARY in analytics-only mode.
         if analytics_only and next_stage == ConversationStage.CONSENT:
@@ -741,6 +823,35 @@ class ConversationAgent:
         if force_consent_now:
             consent_requested = True
             next_stage = ConversationStage.CONSENT
+
+        # Required PERSONAL_INFO gate before CONSENT:
+        # full_name AND (email OR phone) must be captured.
+        if next_stage == ConversationStage.CONSENT and not consent_given:
+            if not _is_field_present(lead_profile.get("full_name")):
+                response_text = "Before I save your details, could I get your name?"
+                next_stage = ConversationStage.PERSONAL_INFO
+                consent_requested = False
+            elif not _is_field_present(lead_profile.get("email")) and not _is_field_present(
+                lead_profile.get("phone")
+            ):
+                response_text = "And what's the best way to reach you - email or phone number?"
+                next_stage = ConversationStage.PERSONAL_INFO
+                consent_requested = False
+
+        # If details are complete but personal info is missing, stay in PERSONAL_INFO.
+        if (
+            next_stage != ConversationStage.CONSENT
+            and not consent_given
+            and _is_complete(lead_profile, consent_given=False, analytics_only=True)
+            and not _has_required_personal_info(lead_profile)
+        ):
+            next_stage = ConversationStage.PERSONAL_INFO
+            if not _is_field_present(lead_profile.get("full_name")):
+                response_text = "What's your name?"
+            elif not _is_field_present(lead_profile.get("email")) and not _is_field_present(
+                lead_profile.get("phone")
+            ):
+                response_text = "What's the best email or phone to reach you at?"
 
         # If complete (with consent or analytics-only), go to SUMMARY.
         is_complete = consent_just_granted or _is_complete(
@@ -848,13 +959,24 @@ class ConversationAgent:
                     else "Do you have any requirements for the buyer (e.g., cash buyer only, FHA/VA ok, first-time buyer ok)?"
                 )
                 next_stage = ConversationStage.DETAILS_COLLECTION
-            # f) Contact info + consent
+            # f) Contact info then consent
             else:
-                response_text = (
-                    "Before I save your details so an agent can reach out, I need your permission. Is that okay?"
-                )
-                next_stage = ConversationStage.CONSENT
-                consent_requested = True
+                if not _is_field_present(lead_profile.get("full_name")):
+                    response_text = "Who am I speaking with today?"
+                    next_stage = ConversationStage.PERSONAL_INFO
+                    consent_requested = False
+                elif not _is_field_present(lead_profile.get("email")) and not _is_field_present(
+                    lead_profile.get("phone")
+                ):
+                    response_text = "What's the best email or phone to reach you at?"
+                    next_stage = ConversationStage.PERSONAL_INFO
+                    consent_requested = False
+                else:
+                    response_text = (
+                        "Before I save your details so an agent can reach out, I need your permission. Is that okay?"
+                    )
+                    next_stage = ConversationStage.CONSENT
+                    consent_requested = True
 
         # Persist assistant response to transcript table (PII redacted).
         if db is not None and session_id:
@@ -876,6 +998,11 @@ class ConversationAgent:
             is_complete=is_complete,
             consent_requested=consent_requested,
             consent_given=consent_given,
+            widget=_build_widget_for_turn(
+                previous_stage=stage,
+                response_text=response_text,
+                missing_fields=missing_fields,
+            ),
         )
 
         new_state: ConversationState = {

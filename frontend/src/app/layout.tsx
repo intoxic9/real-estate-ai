@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import React, { useMemo, useState } from "react";
 import {
   BarChart3,
+  ClipboardList,
   Calculator,
   Search,
   Gavel,
@@ -14,6 +15,7 @@ import {
   Menu,
   MessageSquare,
   Radar,
+  ScanSearch,
   Settings,
   Users,
   X,
@@ -23,6 +25,7 @@ import { SessionProvider, signOut, useSession } from "next-auth/react";
 const PUBLIC_NAV_ITEMS = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/deals", label: "Deal Finder", icon: Search },
+  { href: "/listings", label: "Listings", icon: ClipboardList },
   { href: "/foreclosures", label: "Foreclosures", icon: Gavel },
   { href: "/valuation", label: "Home Valuation", icon: Home },
   { href: "/neighborhood", label: "Neighborhood Reports", icon: MapPinned },
@@ -34,6 +37,7 @@ const PRIVATE_NAV_ITEMS = [
   { href: "/analytics", label: "Market Analytics", icon: BarChart3 },
   { href: "/signals", label: "Lead Signals", icon: Radar },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/scraper", label: "Scraper", icon: ScanSearch, adminOnly: true },
 ];
 
 const NAV_ITEMS = [...PUBLIC_NAV_ITEMS, ...PRIVATE_NAV_ITEMS];
@@ -128,7 +132,7 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
 
               <div className="my-2 border-t border-white/10" />
 
-              {PRIVATE_NAV_ITEMS.map((item) => {
+              {PRIVATE_NAV_ITEMS.filter((item) => !item.adminOnly || role === "admin").map((item) => {
                 const Icon = item.icon;
                 const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                 return (
