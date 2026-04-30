@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+asyncpg
+pydantic
+python-dotenv
+langchain
+langchain-groq
+google-api-python-client
+httpx
+alembic
+pytest
+praw
+feedparser
+python-multipart
+ddgs
+

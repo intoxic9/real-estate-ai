@@ -1,0 +1,8 @@
+venv/
+node_modules/
+.env
+credentials.json
+__pycache__/
+.next/
+*.pyc
+.DS_Store
