@@ -90,6 +90,9 @@ async def _align_existing_schema() -> None:
         await conn.execute(
             text("ALTER TABLE lead_profiles ADD COLUMN IF NOT EXISTS is_first_time_buyer BOOLEAN")
         )
+        await conn.execute(
+            text("ALTER TABLE conversation_transcripts ALTER COLUMN lead_id DROP NOT NULL")
+        )
 
 
 @asynccontextmanager

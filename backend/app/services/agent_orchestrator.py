@@ -67,6 +67,7 @@ class AgentOrchestrator:
         role: str,
         content: str,
         db: Optional[AsyncSession] = None,
+        lead_id: Optional[UUID] = None,
     ) -> None:
         timestamp = datetime.now(timezone.utc)
         entry = {
@@ -84,25 +85,21 @@ class AgentOrchestrator:
         except Exception:
             return
 
-        # Attach lead_id when known so /api/leads/{id} can reliably load transcript.
-        lead_id: Optional[UUID] = None
-        profile = self.get_profile(session_id)
-        if profile is not None:
-            try:
-                lead_id = UUID(str(profile.id))
-            except Exception:
-                lead_id = None
-
-        db.add(
-            ConversationTranscriptORM(
-                session_id=session_id,
-                lead_id=lead_id,
-                role=chat_role,
-                content=content,
-                timestamp=timestamp,
+        # Keep transcript persistence non-fatal: chat should continue even if DB write fails.
+        try:
+            db.add(
+                ConversationTranscriptORM(
+                    session_id=session_id,
+                    lead_id=lead_id,  # None during early turns; set later after lead persistence.
+                    role=chat_role,
+                    content=content,
+                    timestamp=timestamp,
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            print(f"Transcript save error (non-fatal): {exc}")
 
     async def get_transcript(
         self,

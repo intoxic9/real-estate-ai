@@ -162,6 +162,16 @@ class ComplianceAgent:
         ]
         return any(re.search(p, text) for p in explicit_patterns)
 
+    @staticmethod
+    def _has_user_provided_phone(messages: List[Dict[str, str]]) -> bool:
+        phone_pattern = re.compile(
+            r"(?<!\d)(?:\+?1[\s\-\.]?)?(?:\(?\d{3}\)?[\s\-\.]?)\d{3}[\s\-\.]?\d{4}(?!\d)"
+        )
+        for msg in messages:
+            if msg["role"].lower() == "user" and phone_pattern.search(msg["content"]):
+                return True
+        return False
+
     async def evaluate(
         self,
         lead_profile: LeadProfile,
@@ -192,6 +202,8 @@ class ComplianceAgent:
             )
 
         # 2 + 5) LLM scans for Fair Housing issues and risky claims
+        assistant_only_messages = [m for m in messages if m["role"].lower() == "assistant"]
+        assistant_text = self._format_transcript(assistant_only_messages)
         llm_out = cast(
             _ComplianceDetectionLLMOutput,
             await self._llm.ainvoke(
@@ -200,18 +212,28 @@ class ComplianceAgent:
                         "system",
                         (
                             "You are a US real estate compliance auditor. Detect potential Fair Housing Act "
-                            "violations and risky marketing/financial claims in assistant messages.\n"
+                            "violations and risky marketing/financial claims in assistant messages only.\n"
                             "Return only structured fields.\n"
-                            "Flag issues such as steering, protected-class questions, demographic/safety characterizations,\n"
-                            "guaranteed returns/appreciation, specific ROI predictions, false urgency, unauthorized mortgage rate quotes,\n"
-                            "and tax advice beyond general information."
+                            "Be conservative: only flag clear, explicit violations. If unsure, do not flag.\n\n"
+                            "Flag ONLY actual violations, for example:\n"
+                            "- 'guaranteed 15% returns'\n"
+                            "- 'this property will double in value'\n"
+                            "- 'you will definitely get approved'\n"
+                            "- explicit steering or protected-class discrimination\n\n"
+                            "Examples of what is NOT a violation (do NOT flag):\n"
+                            "- Asking about financing type (standard intake question)\n"
+                            "- Repeating the user's stated timeline (e.g., 'within 1-3 months')\n"
+                            "- 'I'll note that down' acknowledgment statements\n"
+                            "- Summarizing conversation/preferences\n"
+                            "- Offering to assist further / polite closing language\n"
+                            "- General non-guaranteed guidance without promises"
                         ),
                     ),
                     (
                         "user",
                         (
-                            "Transcript (role-prefixed):\n"
-                            f"{transcript_text}\n\n"
+                            "Transcript (assistant messages only):\n"
+                            f"{assistant_text}\n\n"
                             "Return concise violation strings with short rationale."
                         ),
                     ),
@@ -227,11 +249,8 @@ class ComplianceAgent:
         # 4) TCPA check
         if lead_profile.phone:
             explicit_phone_consent = self._has_explicit_phone_marketing_consent(messages)
-            if explicit_phone_consent:
-                blocked_claims.append("TCPA_LOG: explicit phone/text consent detected.")
-            elif consent_verified:
-                blocked_claims.append("TCPA_LOG: only implied consent detected; verify explicit marketing consent before outreach.")
-            else:
+            user_provided_phone = self._has_user_provided_phone(messages)
+            if not explicit_phone_consent and not user_provided_phone and not consent_verified:
                 blocked_claims.append("TCPA_MISSING_PHONE_CONSENT: phone present but explicit contact consent not verified.")
 
         # Include consent evidence log in sanitized transcript.
@@ -242,25 +261,15 @@ class ComplianceAgent:
             f"{sanitized_transcript}"
         )
 
-        # Lead is compliant only if consent is verified and there are no blocking violations.
-        # TCPA logs (non-missing) are informational, not hard blockers.
+        # Lead is compliant unless there are clear hard blockers.
+        # Keep strict hard blockers for missing consent/TCPA missing consent and explicit LLM violations.
         hard_block_prefixes = (
             "CONSENT_MISSING_OR_INCOMPLETE",
             "TCPA_MISSING_PHONE_CONSENT",
         )
         hard_block = any(
             claim.startswith(hard_block_prefixes) for claim in blocked_claims
-        ) or any(
-            # LLM findings are treated as blocking by default for safety gate behavior.
-            claim not in {
-                "TCPA_LOG: explicit phone/text consent detected.",
-                "TCPA_LOG: only implied consent detected; verify explicit marketing consent before outreach.",
-            }
-            and claim.startswith("TCPA_LOG:") is False
-            and claim.startswith("CONSENT_MISSING_OR_INCOMPLETE") is False
-            and claim.startswith("TCPA_MISSING_PHONE_CONSENT") is False
-            for claim in llm_out.fair_housing_violations + llm_out.risky_claims
-        )
+        ) or bool(llm_out.fair_housing_violations or llm_out.risky_claims)
 
         compliant = not hard_block and consent_verified
 

@@ -12,11 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import logging
 from typing import List, Optional
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
+logger = logging.getLogger(__name__)
 
 
 class SheetsService:
@@ -84,9 +87,25 @@ class SheetsService:
             except HttpError as exc:
                 status = getattr(exc.resp, "status", None)
                 retriable = status in {429, 500, 502, 503, 504}
+                logger.exception(
+                    "Google Sheets API error on append attempt %s/%s (status=%s, retriable=%s, spreadsheet=%s, sheet=%s)",
+                    attempt,
+                    max_retries,
+                    status,
+                    retriable,
+                    target_spreadsheet,
+                    target_sheet,
+                )
                 if attempt >= max_retries or not retriable:
                     raise
             except Exception:
+                logger.exception(
+                    "Unexpected Google Sheets append failure on attempt %s/%s (spreadsheet=%s, sheet=%s)",
+                    attempt,
+                    max_retries,
+                    target_spreadsheet,
+                    target_sheet,
+                )
                 if attempt >= max_retries:
                     raise
 

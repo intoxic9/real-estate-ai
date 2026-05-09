@@ -82,6 +82,22 @@ function scoreClass(bucket?: string | null) {
   return "bg-slate-100 text-slate-700";
 }
 
+function getRoutingStatus(bucket?: "hot" | "warm" | "cold" | null, destination?: string | null) {
+  if (destination === "google_sheets") {
+    return { label: "Routed to CRM", cls: "text-emerald-400" };
+  }
+  if (destination === "blocked" && bucket === "hot") {
+    return { label: "Blocked", cls: "text-rose-400" };
+  }
+  if (bucket === "warm") {
+    return { label: "Nurture Queue", cls: "text-amber-400" };
+  }
+  if (bucket === "cold") {
+    return { label: "Stored", cls: "text-slate-300" };
+  }
+  return { label: destination || "Pending", cls: "text-slate-200" };
+}
+
 export default function ChatPage() {
   const router = useRouter();
   const companyName = process.env.NEXT_PUBLIC_COMPANY_NAME || "810 Realty";
@@ -130,6 +146,10 @@ export default function ChatPage() {
     if (joined.includes("not pre-approved") || joined.includes("not pre approved")) return "No";
     return "Unknown";
   }, [messages]);
+  const routingStatus = useMemo(
+    () => getRoutingStatus(pipelineSummary?.bucket ?? null, pipelineSummary?.destination ?? null),
+    [pipelineSummary?.bucket, pipelineSummary?.destination]
+  );
 
   async function safeJson<T>(response: Response): Promise<T> {
     const raw = await response.text();
@@ -537,7 +557,7 @@ export default function ChatPage() {
                     </div>
                     <div className="flex justify-between text-[10px]">
                       <span className="text-slate-400">Destination</span>
-                      <span className="font-bold">{pipelineSummary.destination || "Pending"}</span>
+                      <span className={`font-bold ${routingStatus.cls}`}>{routingStatus.label}</span>
                     </div>
                   </div>
                 </div>

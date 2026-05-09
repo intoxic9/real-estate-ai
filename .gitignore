@@ -6,3 +6,7 @@ __pycache__/
 .next/
 *.pyc
 .DS_Store
+
+# Local runtime logs (may contain stack traces)
+backend/error_log.txt
+error_log.txt
