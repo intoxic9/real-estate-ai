@@ -213,9 +213,9 @@ class ScoringAgent:
 
     @staticmethod
     def _bucket(score: int) -> ScoreBucket:
-        if score >= 70:
+        if score >= 60:
             return ScoreBucket.hot
-        if score >= 40:
+        if score >= 35:
             return ScoreBucket.warm
         return ScoreBucket.cold
 

@@ -117,6 +117,18 @@ type NotificationsResponse = {
   items: HotLeadNotification[];
   unread_count: number;
 };
+type RouteLeadResponse = {
+  status: "routed" | "failed" | "queued";
+  destination: string;
+  details?: string | null;
+  error?: string | null;
+};
+type MarkComplianceResponse = {
+  status: "updated" | "failed";
+  lead_id: string;
+  details?: string | null;
+  error?: string | null;
+};
 
 const US_MARKETS = [
   "All Markets",
@@ -336,8 +348,61 @@ export default function DashboardPage() {
   }
 
   async function routeLead(leadId: string) {
-    await fetch(`${API_BASE_URL}/api/leads/${leadId}/route`, { method: "POST" });
-    await loadDashboard(false);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/leads/${leadId}/route`, { method: "POST" });
+      const data = await safeJson<RouteLeadResponse>(res);
+      if (!res.ok || data.status === "failed") {
+        const errorMessage = data.error || `Lead routing failed (${res.status}).`;
+        window.alert(errorMessage);
+        return;
+      }
+      const message = data.details || `Lead routed to ${data.destination}.`;
+      window.alert(message);
+      await loadDashboard(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Lead routing failed.";
+      window.alert(message);
+    }
+  }
+
+  async function markCompliant(leadId: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/leads/${leadId}/compliance/mark-compliant`, {
+        method: "POST",
+      });
+      const data = await safeJson<MarkComplianceResponse>(res);
+      if (!res.ok || data.status === "failed") {
+        const errorMessage = data.error || `Compliance update failed (${res.status}).`;
+        window.alert(errorMessage);
+        return;
+      }
+      window.alert(data.details || "Lead marked compliant.");
+      setDetails((prev) => {
+        const existing = prev[leadId];
+        if (!existing) return prev;
+        const updatedCompliance = existing.compliance_results.length
+          ? [
+              {
+                ...existing.compliance_results[0],
+                compliant: true,
+                blocked_claims: [],
+              },
+              ...existing.compliance_results.slice(1),
+            ]
+          : existing.compliance_results;
+        return {
+          ...prev,
+          [leadId]: {
+            ...existing,
+            compliance_results: updatedCompliance,
+          },
+        };
+      });
+      await loadDashboard(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Compliance update failed.";
+      window.alert(message);
+    }
   }
 
   async function deleteLead(leadId: string) {
@@ -629,6 +694,15 @@ export default function DashboardPage() {
                                         ? "verified"
                                         : "not verified"}
                                     </p>
+                                    {!detail.compliance_results[0]?.compliant && (
+                                      <button
+                                        type="button"
+                                        onClick={() => markCompliant(lead.id)}
+                                        className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                      >
+                                        Mark Compliant
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                                     <p className="text-xs font-semibold uppercase text-slate-500">

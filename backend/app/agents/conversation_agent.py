@@ -135,8 +135,11 @@ IMPORTANT: You MUST ask for and collect the user's name before asking for consen
 You must also collect either an email address or phone number. Never skip these fields.
 Ask naturally:
 - "What's your name?" or "Who am I speaking with today?"
-- "What's the best email or phone to reach you at?"
+- "Could I get your name and the best way to reach you?"
 These are required for our team to follow up.
+When collecting personal information, ALWAYS ask for the user's preferred name along with their
+contact info. Ask both in one message, naturally: "Could I get your name and the best way to
+reach you?" Never skip asking for the name.
 
 Extraction rules for lead_profile_updates:
 - Capture partial fields when user provides them: intent, target_market, preferred_locations,
@@ -296,14 +299,36 @@ def _heuristic_updates_from_text(text: str) -> Dict[str, Any]:
         updates["property_type"] = PropertyType.commercial
 
     # Timeline extraction.
-    if re.search(r"next\s+(1|2|3)\s+month", t) or re.search(r"\bwithin\s+\d+\s+month", t):
-        updates["timeline"] = LeadTimeline.one_to_three_months
-    elif re.search(r"next\s+(4|5|6)\s+month", t) or "3_6_months" in t:
-        updates["timeline"] = LeadTimeline.three_to_six_months
-    elif re.search(r"next\s+(7|8|9|10|11|12)\s+month", t):
-        updates["timeline"] = LeadTimeline.six_to_twelve_months
-    elif "immediately" in t or "asap" in t or re.search(r"under\s+30\s+days", t):
+    if any(x in t for x in ["just exploring", "exploring", "just browsing", "not sure yet"]):
+        updates["timeline"] = LeadTimeline.exploring
+    elif "asap" in t or "immediately" in t or re.search(r"\bmove\s+asap\b", t) or re.search(r"under\s+30\s+days", t):
         updates["timeline"] = LeadTimeline.immediate
+    elif (
+        "1-3 months" in t
+        or "1 to 3 months" in t
+        or "1_3_months" in t
+        or re.search(r"\b(i need to move in|move in|within|in)\s+(1|2|3)\s+months?\b", t)
+        or re.search(r"\bnext\s+(1|2|3)\s+months?\b", t)
+    ):
+        updates["timeline"] = LeadTimeline.one_to_three_months
+    elif (
+        "3-6 months" in t
+        or "3 to 6 months" in t
+        or "3_6_months" in t
+        or re.search(r"\b(in|within|next)\s+(4|5|6)\s+months?\b", t)
+        or re.search(r"\b6\s+months?\b", t)
+    ):
+        updates["timeline"] = LeadTimeline.three_to_six_months
+    elif (
+        "6-12 months" in t
+        or "6 to 12 months" in t
+        or "6_12_months" in t
+        or re.search(r"\b(in|within|next)\s+(7|8|9|10|11|12)\s+months?\b", t)
+        or "a year" in t
+        or "1 year" in t
+        or "one year" in t
+    ):
+        updates["timeline"] = LeadTimeline.six_to_twelve_months
 
     return updates
 
@@ -846,12 +871,10 @@ class ConversationAgent:
             and not _has_required_personal_info(lead_profile)
         ):
             next_stage = ConversationStage.PERSONAL_INFO
-            if not _is_field_present(lead_profile.get("full_name")):
-                response_text = "What's your name?"
-            elif not _is_field_present(lead_profile.get("email")) and not _is_field_present(
-                lead_profile.get("phone")
-            ):
-                response_text = "What's the best email or phone to reach you at?"
+            response_text = (
+                "Great! Before we connect you with an agent, could I get your preferred name and the "
+                "best email or phone to reach you at?"
+            )
 
         # If complete (with consent or analytics-only), go to SUMMARY.
         is_complete = consent_just_granted or _is_complete(
@@ -968,7 +991,10 @@ class ConversationAgent:
                 elif not _is_field_present(lead_profile.get("email")) and not _is_field_present(
                     lead_profile.get("phone")
                 ):
-                    response_text = "What's the best email or phone to reach you at?"
+                    response_text = (
+                        "Great! Before we connect you with an agent, could I get your preferred name and the "
+                        "best email or phone to reach you at?"
+                    )
                     next_stage = ConversationStage.PERSONAL_INFO
                     consent_requested = False
                 else:

@@ -8,6 +8,7 @@ detects duplicates, and pushes hot compliant leads to Google Sheets.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,8 @@ from ..core.schemas import (
 )
 from ..services.notification_service import NotificationService
 from ..services.sheets_service import SheetsService
+
+logger = logging.getLogger(__name__)
 
 
 class RoutingResult(BaseModel):
@@ -211,6 +214,14 @@ class RoutingAgent:
         5) Add suggested geographic market assignment metadata
         """
         suggested_market = self._suggested_agent_market(lead_profile)
+        logger.info(
+            "Routing decision input: lead_id=%s score=%s bucket=%s compliant=%s blocked_claims=%s",
+            lead_profile.id,
+            score_result.heat_score,
+            score_result.bucket.value,
+            compliance_result.compliant,
+            compliance_result.blocked_claims,
+        )
 
         # Always store with audit trail (including blocked leads).
         lead_row = await self._upsert_lead_with_audit(
@@ -227,6 +238,11 @@ class RoutingAgent:
                 "Blocked by compliance gate. "
                 + ("; ".join(compliance_result.blocked_claims) if compliance_result.blocked_claims else "No details provided.")
             )
+            logger.warning(
+                "Lead blocked by compliance: lead_id=%s reason=%s",
+                lead_row.id,
+                reason,
+            )
             return RoutingResult(
                 routed=False,
                 destination="blocked",
@@ -236,7 +252,7 @@ class RoutingAgent:
             )
 
         # Route hot leads to Sheets
-        if score_result.bucket == ScoreBucket.hot:
+        if score_result.bucket == ScoreBucket.hot and compliance_result.compliant is True:
             if self.sheets_service is None:
                 self.sheets_service = SheetsService()
             row = [
@@ -254,7 +270,17 @@ class RoutingAgent:
                 datetime.now(timezone.utc).isoformat(),
                 suggested_market or "",
             ]
-            await self.sheets_service.append_row(row)
+            try:
+                await self.sheets_service.append_row(row)
+            except Exception as exc:
+                logger.exception(
+                    "Google Sheets append failed for lead_id=%s bucket=%s score=%s: %s",
+                    lead_row.id,
+                    score_result.bucket.value,
+                    score_result.heat_score,
+                    exc,
+                )
+                raise
             await self.notification_service.notify_hot_lead_routed(
                 db=db,
                 lead_id=lead_row.id,

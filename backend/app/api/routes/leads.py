@@ -33,6 +33,7 @@ from ...core.schemas import (
     ScoreResultORM,
 )
 from ...services.clay_service import ClayService
+from ...services.sheets_service import SheetsService
 
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
@@ -96,6 +97,17 @@ class RouteLeadResponse(BaseModel):
 
     status: str
     destination: str
+    details: Optional[str] = None
+    error: Optional[str] = None
+
+
+class MarkComplianceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    lead_id: str
+    details: Optional[str] = None
+    error: Optional[str] = None
 
 
 class ImportClayResponse(BaseModel):
@@ -486,10 +498,9 @@ async def route_lead(
     db: AsyncSession = Depends(get_db),
 ) -> RouteLeadResponse:
     """
-    Manually trigger routing to Google Sheets CRM. Returns mock routing status.
+    Manually trigger routing to Google Sheets CRM synchronously so
+    routing errors are returned in the response.
     """
-
-    _ = db
 
     if not lead_id:
         raise HTTPException(
@@ -497,8 +508,148 @@ async def route_lead(
             detail="lead_id is required",
         )
 
-    # TODO: Call sheets_service to push lead into Google Sheets.
-    return RouteLeadResponse(status="queued", destination="google_sheets")
+    try:
+        lead_uuid = UUID(lead_id)
+    except ValueError:
+        return RouteLeadResponse(
+            status="failed",
+            destination="google_sheets",
+            error="Invalid lead_id format.",
+        )
+
+    try:
+        lead_row = (
+            await db.execute(select(LeadProfileORM).where(LeadProfileORM.id == lead_uuid))
+        ).scalar_one_or_none()
+        if lead_row is None:
+            return RouteLeadResponse(
+                status="failed",
+                destination="google_sheets",
+                error="Lead not found.",
+            )
+
+        latest_score = (
+            await db.execute(
+                select(ScoreResultORM)
+                .where(ScoreResultORM.lead_id == lead_uuid)
+                .order_by(ScoreResultORM.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest_score is None:
+            return RouteLeadResponse(
+                status="failed",
+                destination="google_sheets",
+                error="No score found for lead.",
+            )
+
+        latest_compliance = (
+            await db.execute(
+                select(ComplianceResultORM)
+                .where(ComplianceResultORM.lead_id == lead_uuid)
+                .order_by(ComplianceResultORM.timestamp.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest_compliance is None:
+            return RouteLeadResponse(
+                status="failed",
+                destination="google_sheets",
+                error="No compliance result found for lead.",
+            )
+        if not latest_compliance.compliant:
+            return RouteLeadResponse(
+                status="failed",
+                destination="blocked",
+                error="Lead is blocked by compliance.",
+            )
+
+        budget_summary = "N/A"
+        if lead_row.budget_min is not None and lead_row.budget_max is not None:
+            budget_summary = f"${lead_row.budget_min:,.0f} - ${lead_row.budget_max:,.0f}"
+        elif lead_row.budget_min is not None:
+            budget_summary = f"${lead_row.budget_min:,.0f}+"
+        elif lead_row.budget_max is not None:
+            budget_summary = f"Up to ${lead_row.budget_max:,.0f}"
+
+        row = [
+            lead_row.full_name or "",
+            lead_row.email or "",
+            lead_row.phone or "",
+            lead_row.intent.value if hasattr(lead_row.intent, "value") else str(lead_row.intent or ""),
+            str(latest_score.heat_score),
+            budget_summary,
+            ", ".join(lead_row.preferred_locations or []) or (lead_row.target_market or ""),
+            lead_row.timeline.value if hasattr(lead_row.timeline, "value") else str(lead_row.timeline or ""),
+            lead_row.financing_type.value if hasattr(lead_row.financing_type, "value") else str(lead_row.financing_type or ""),
+            "Y" if lead_row.is_first_time_buyer else "N",
+            datetime.now(timezone.utc).isoformat(),
+            (lead_row.target_market or ""),
+        ]
+
+        sheets = SheetsService()
+        await sheets.append_row(row)
+        return RouteLeadResponse(
+            status="routed",
+            destination="google_sheets",
+            details="Lead routed to Google Sheets successfully.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return RouteLeadResponse(
+            status="failed",
+            destination="google_sheets",
+            error=str(exc),
+        )
+
+
+@router.post(
+    "/{lead_id}/compliance/mark-compliant",
+    response_model=MarkComplianceResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def mark_lead_compliant(
+    lead_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> MarkComplianceResponse:
+    if not lead_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lead_id is required",
+        )
+    try:
+        lead_uuid = UUID(lead_id)
+    except ValueError:
+        return MarkComplianceResponse(
+            status="failed",
+            lead_id=lead_id,
+            error="Invalid lead_id format.",
+        )
+
+    latest_compliance = (
+        await db.execute(
+            select(ComplianceResultORM)
+            .where(ComplianceResultORM.lead_id == lead_uuid)
+            .order_by(ComplianceResultORM.timestamp.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if latest_compliance is None:
+        return MarkComplianceResponse(
+            status="failed",
+            lead_id=lead_id,
+            error="No compliance record found for this lead.",
+        )
+
+    latest_compliance.compliant = True
+    latest_compliance.blocked_claims = []
+    await db.commit()
+
+    return MarkComplianceResponse(
+        status="updated",
+        lead_id=lead_id,
+        details="Lead compliance status changed to compliant.",
+    )
 
 
 @router.post(
