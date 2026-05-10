@@ -2,7 +2,7 @@
 
 An AI-powered platform that captures, qualifies, scores, and routes real estate leads automatically using five specialized AI agents. Built for the US residential real estate market.
 
-**Team:** Vedant Khatri · Rashi Agrawal · Abhishek Mishra · Eduard Mustafin  
+**Team:** Vedant Khatri · Rashi Agrawal · Abhishek Mishra
 **Course:** 810 — Special Topics in BIA · Spring 2026
 
 ---
